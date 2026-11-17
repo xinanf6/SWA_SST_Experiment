@@ -1,0 +1,4 @@
+-r requirements.txt
+
+# Offline tests; keep the existing supported environment without forced upgrades.
+pytest>=7,<9
