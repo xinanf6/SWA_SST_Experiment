@@ -236,6 +236,54 @@ class PipelineTests(unittest.TestCase):
         with self.assertRaisesRegex(ResumeMismatchError, "different inputs/settings"):
             _quiet_run(self.config, resume=True)
 
+    def test_missing_environment_excludes_only_consuming_windows_without_imputation(self):
+        bad_day = self.config.splits["validation"][0]
+        path = self.config.data_root / "ERA5" / "2020" / "ERA5_2020_02.nc"
+        with xr.open_dataset(path) as source:
+            modified = source.load()
+        day_index = int(np.flatnonzero(modified.time.values == np.datetime64(bad_day))[0])
+        modified["sshf"].values[day_index, 3, 3] = np.nan
+        modified.to_netcdf(path, mode="w")
+        report = _quiet_run(self.config)
+        expected_counts = {"train": 1, "validation": 0, "test": 1}
+        self.assertEqual(report["sample_counts"], expected_counts)
+        self.assertEqual(verify_output(self.config.output_root, deep=True)["status"], "verified")
+        self._assert_missing_day_artifacts(bad_day, expected_counts)
+        self._assert_missing_day_dataset_access()
+
+    def _assert_missing_day_artifacts(self, bad_day: str, expected_counts: dict) -> None:
+        physical = _load_physical(self.config.output_root)
+        self.assertTrue(np.isnan(physical["sshf"].sel(time=bad_day).values[3, 3]))
+        flags = pd.read_csv(self.config.output_root / "daily_quality.csv").set_index("date")
+        self.assertFalse(bool(flags.loc[bad_day, "environment_valid"]))
+        self.assertTrue(bool(flags.loc[bad_day, "sst_valid"]))
+        self.assertTrue(bool(flags.loc[bad_day, "front_valid"]))
+        self.assertGreater(int(flags.loc[bad_day, "missing_environment"]), 0)
+        excluded = pd.read_csv(self.config.output_root / "excluded_samples.csv")
+        self.assertEqual(excluded["split"].tolist(), ["validation"])
+        self.assertIn("environment_history", excluded.iloc[0]["exclusion_reason"])
+        self.assertIn(bad_day, excluded.iloc[0]["exclusion_reason"])
+        with (self.config.output_root / "READY.json").open(encoding="utf-8") as handle:
+            self.assertEqual(json.load(handle)["sample_counts"], expected_counts)
+        day_index = int(np.flatnonzero(FIXTURE_DATES.values == np.datetime64(bad_day))[0])
+        thermal = np.load(self.config.output_root / "normalized" / "thermal.npy")
+        self.assertEqual(float(thermal[day_index, 0, 3, 3]), 0.0)
+        self.assertEqual(float(thermal[day_index, 2, 3, 3]), 0.0)
+
+    def _assert_missing_day_dataset_access(self) -> None:
+        for split in EXPECTED_COUNTS:
+            dataset = PreparedSSTDataset(self.config.output_root, split=split)
+            try:
+                if split == "validation":
+                    self.assertEqual(len(dataset), 0)
+                    with self.assertRaises(IndexError):
+                        dataset[0]
+                    continue
+                self.assertEqual(len(dataset), 1)
+                self.assertTrue(np.isfinite(dataset[0]["thermal"]).all())
+            finally:
+                _close_dataset(dataset)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -70,13 +70,22 @@ def _write_normalized_month(state: dict, month: str) -> None:
             for channel, name in enumerate(variables):
                 values = dataset[name].values
                 mask = grid["gradient_mask"] if name in FRONT_VARIABLES else grid["ocean_mask"]
-                if not np.isfinite(values[:, mask]).all():
-                    raise DataValidationError("Unexpected missing %s at fixed ocean cells in %s; no silent imputation" %
-                                              (name, month))
+                _verify_recorded_missing(dataset, {"values": values[:, mask], "name": name}, state)
                 info = state["statistics"]["variables"][name]
                 state["arrays"][group][start:stop, channel] = normalize_values(values, info, mask)
     for array in state["arrays"].values():
         array.flush()
+
+
+def _verify_recorded_missing(dataset: xr.Dataset, feature: dict, state: dict) -> None:
+    name, values = feature["name"], feature["values"]
+    dates = pd.DatetimeIndex(dataset.time.values).strftime("%Y-%m-%d")
+    flags = state["quality"].loc[dates]
+    column = "front_valid" if name in FRONT_VARIABLES else (
+        "sst_valid" if name == "sst" else "environment_valid")
+    has_missing = ~np.isfinite(values).all(axis=1)
+    if np.any(has_missing & flags[column].to_numpy(dtype=bool)):
+        raise DataValidationError("Unrecorded missing values for %s; rebuild daily quality report" % name)
 
 
 def prepare_normalized_arrays(context, statistics: dict, grid: dict) -> None:
@@ -89,8 +98,10 @@ def prepare_normalized_arrays(context, statistics: dict, grid: dict) -> None:
         check_identity(progress, identity, "normalization.json")
     if progress["months_done"] != context.months[:len(progress["months_done"])]:
         raise ResumeMismatchError("Normalization checkpoint months are not a valid prefix")
+    quality = pd.read_csv(context.root / "daily_quality.csv").set_index("date")
     arrays = _open_maps(context, grid, progress)
-    state = {"context": context, "grid": grid, "arrays": arrays, "statistics": statistics}
+    state = {"context": context, "grid": grid, "arrays": arrays,
+             "statistics": statistics, "quality": quality}
     try:
         for month in context.months:
             if month in progress["months_done"]:

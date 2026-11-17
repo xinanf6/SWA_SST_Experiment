@@ -197,10 +197,38 @@ def _write_index(context: PipelineContext) -> dict:
     dates = pd.date_range(context.config.start_date, context.config.end_date, freq="D")
     write_npy_atomic(context.root / "dates.npy", dates.values.astype("datetime64[D]"))
     index = build_sample_index(dates, context.config)
+    from .quality import filter_sample_index
+    quality = pd.read_csv(context.root / "daily_quality.csv")
+    index, excluded = filter_sample_index(index, quality)
+    excluded_temporary = context.root / "excluded_samples.csv.tmp"
+    excluded.to_csv(excluded_temporary, index=False, encoding="utf-8")
+    excluded_temporary.replace(context.root / "excluded_samples.csv")
     temporary = context.root / "sample_index.csv.tmp"
     index.to_csv(temporary, index=False, encoding="utf-8")
     temporary.replace(context.root / "sample_index.csv")
     return {name: int((index["split"] == name).sum()) for name in context.config.splits}
+
+
+def _prepare_daily_quality(context: PipelineContext, grid: dict) -> None:
+    from .quality import assess_daily_quality
+    path = context.root / "daily_quality.csv"
+    metadata_path = context.root / "daily_quality.json"
+    if path.is_file() and metadata_path.is_file():
+        check_identity(read_json(metadata_path), context.identity, "daily_quality.json")
+        return
+    frames = []
+    for month in context.months:
+        with xr.open_dataset(context.physical_path(month)) as dataset:
+            frames.append(assess_daily_quality(dataset, grid))
+    quality = pd.concat(frames, ignore_index=True)
+    temporary = path.with_name(path.name + ".tmp")
+    quality.to_csv(temporary, index=False, encoding="utf-8")
+    temporary.replace(path)
+    columns = ["sst_valid", "front_valid", "environment_valid"]
+    invalid = quality.loc[~quality[columns].all(axis=1)]
+    write_json_atomic(metadata_path, {"run_identity": context.identity,
+                      "invalid_days": invalid.to_dict(orient="records"),
+                      "policy": "No imputation; exclude windows with invalid inputs/targets"})
 
 
 def run_preprocessing(config: PreprocessConfig, *, resume: bool = False,
@@ -219,6 +247,7 @@ def run_preprocessing(config: PreprocessConfig, *, resume: bool = False,
         write_json_atomic(context.root / "smoke_report.json", report)
         return report
     statistics, grid = _get_statistics(context)
+    _prepare_daily_quality(context, grid)
     from .normalization import prepare_normalized_arrays
     prepare_normalized_arrays(context, statistics, grid)
     counts = _write_index(context)

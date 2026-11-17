@@ -20,8 +20,14 @@ from .statistics import StreamingMoments, denormalize_values
 def _verify_index(root: Path, config: PreprocessConfig, dates: np.ndarray) -> dict:
     actual = pd.read_csv(root / "sample_index.csv")
     expected = build_sample_index(dates, config)
+    from .quality import filter_sample_index
+    expected, excluded = filter_sample_index(expected, pd.read_csv(root / "daily_quality.csv"))
     try:
-        pd.testing.assert_frame_equal(actual, expected, check_dtype=False)
+        pd.testing.assert_frame_equal(actual.reset_index(drop=True), expected.reset_index(drop=True),
+                                      check_dtype=False)
+        actual_excluded = pd.read_csv(root / "excluded_samples.csv").fillna("").reset_index(drop=True)
+        pd.testing.assert_frame_equal(actual_excluded, excluded.fillna("").reset_index(drop=True),
+                                      check_dtype=False)
     except AssertionError as error:
         raise DataValidationError("Sample index violates date/lag/split contract: %s" % error)
     return {name: int((actual["split"] == name).sum()) for name in config.splits}
@@ -76,13 +82,16 @@ def _verify_normalized_month(dataset: xr.Dataset, state: dict) -> None:
 def _check_variable_roundtrip(physical: np.ndarray, normalized: np.ndarray,
                               details: dict) -> None:
     name, mask = details["name"], details["mask"]
-    if not np.isfinite(normalized).all() or not np.isfinite(physical[:, mask]).all():
+    if not np.isfinite(normalized).all():
         raise DataValidationError("Nonfinite values in a completed feature: %s" % name)
     if np.any(normalized[:, ~mask] != 0):
         raise DataValidationError("Unmasked fill values in normalized feature: %s" % name)
     info = details["statistics"]["variables"][name]
-    restored = denormalize_values(normalized[:, mask], info["mean"], info["std"])
-    if not np.allclose(restored, physical[:, mask], rtol=2e-5, atol=2e-5):
+    valid = np.isfinite(physical[:, mask])
+    if np.any(normalized[:, mask][~valid] != 0):
+        raise DataValidationError("Invalid daily source cells must be zero placeholders: %s" % name)
+    restored = denormalize_values(normalized[:, mask][valid], info["mean"], info["std"])
+    if not np.allclose(restored, physical[:, mask][valid], rtol=2e-5, atol=2e-5):
         raise DataValidationError("Normalization round-trip failed: %s" % name)
 
 
@@ -91,11 +100,13 @@ def _deep_verify(root: Path, state: dict) -> dict:
     variables = [name for group in FEATURE_GROUPS.values() for name in group]
     state["moments"] = {name: StreamingMoments() for name in variables}
     all_dates, filled_points = [], 0
+    quality = pd.read_csv(root / "daily_quality.csv")
     for path in sorted((root / "physical").glob("*.nc")):
         with xr.open_dataset(path) as dataset:
             check_identity(dataset.attrs, state["identity"], str(path))
             all_dates.extend(dataset.time.values)
             _verify_heat(dataset, config)
+            _verify_daily_quality(dataset, quality, grid)
             _verify_normalized_month(dataset, state)
             filled_points += int(dataset["mld_was_filled"].values[:, grid["ocean_mask"]].sum())
     expected = pd.date_range(config.start_date, config.end_date)
@@ -109,6 +120,16 @@ def _deep_verify(root: Path, state: dict) -> dict:
     return {"normalized_training_statistics": normalized_stats, "mld_filled_target_grid_days": filled_points}
 
 
+def _verify_daily_quality(dataset: xr.Dataset, quality: pd.DataFrame, grid: dict) -> None:
+    from .quality import assess_daily_quality
+    expected = assess_daily_quality(dataset, grid)
+    selected = quality.loc[quality["date"].isin(expected["date"])].reset_index(drop=True)
+    try:
+        pd.testing.assert_frame_equal(selected, expected, check_dtype=False)
+    except AssertionError as error:
+        raise DataValidationError("Daily quality report does not match physical sources: %s" % error)
+
+
 def _verification_state(root: Path, expected_identity: str) -> dict:
     run, inventory = read_json(root / "run.json"), read_json(root / "manifest.json")
     config = PreprocessConfig(**run["config"])
@@ -116,6 +137,7 @@ def _verification_state(root: Path, expected_identity: str) -> dict:
     check_identity(run, expected_identity or identity, "run.json")
     statistics = read_json(root / "stats.json")
     check_identity(statistics, identity, "stats.json")
+    check_identity(read_json(root / "daily_quality.json"), identity, "daily_quality.json")
     with np.load(root / "grid_masks.npz", allow_pickle=False) as archive:
         grid = {name: archive[name] for name in archive.files}
     _verify_grid(grid, config)
@@ -141,6 +163,7 @@ def _verification_report(root: Path, state: dict, deep: bool) -> dict:
     grid, statistics = state["grid"], state["statistics"]
     core_shape = [int(grid["core_mask"].any(axis=1).sum()),
                   int(grid["core_mask"].any(axis=0).sum())]
+    exclusions = pd.read_csv(root / "excluded_samples.csv")
     return {"status": "verified", "run_identity": state["identity"], "days": len(state["dates"]),
               "input_grid_shape": list(grid["ocean_mask"].shape),
               "core_grid_shape": core_shape,
@@ -149,7 +172,10 @@ def _verification_report(root: Path, state: dict, deep: bool) -> dict:
               "gradient_points": int(grid["gradient_mask"].sum()),
               "sample_counts": _verify_index(root, state["config"], state["dates"]),
               "front_threshold_p90": statistics["front_threshold_p90"],
-              "source_file_count": len(state["inventory"]["files"]), "deep_verification": deep}
+              "source_file_count": len(state["inventory"]["files"]), "deep_verification": deep,
+              "invalid_days": read_json(root / "daily_quality.json")["invalid_days"],
+              "excluded_sample_counts": {name: int((exclusions["split"] == name).sum())
+                                         for name in state["config"].splits}}
 
 
 def verify_output(output_root: Path, *, deep: bool = True,
@@ -177,6 +203,8 @@ def write_quality_markdown(root: Path, report: dict) -> None:
              "- Input grid: %s" % report["input_grid_shape"],
              "- Core ocean points: %d" % report["core_ocean_points"],
              "- Samples: %s" % report["sample_counts"],
+             "- Excluded windows due to recorded missing data: %s" % report["excluded_sample_counts"],
+             "- Daily missing-data details: daily_quality.json",
              "- Front P90: %.8f degree_Celsius/km" % report["front_threshold_p90"],
              "- Deep verification: %s" % report["deep_verification"], "",
              "Original protocol: 3 m floor, net surface energy, no shortwave penetration.",
