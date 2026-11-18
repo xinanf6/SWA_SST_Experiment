@@ -19,6 +19,7 @@ def build_parser() -> argparse.ArgumentParser:
         command.add_argument("--output-root", type=Path)
         if name != "predict":
             command.add_argument("--resume", action="store_true")
+            command.add_argument("--no-progress", action="store_true", help="Disable batch progress bars")
         if name == "smoke":
             command.add_argument("--epochs", type=int, default=2)
             command.add_argument("--train-samples", type=int, default=4)
@@ -38,7 +39,7 @@ def _execute(args) -> dict:
         from .predict import export_predictions
         return export_predictions(config, vars(args))
     from .engine import run_training
-    options = {"resume": args.resume}
+    options = {"resume": args.resume, "progress": not args.no_progress}
     if args.command == "smoke":
         if min(args.epochs, args.train_samples, args.validation_samples) < 1:
             raise ValueError("Smoke epochs and sample limits must be positive")

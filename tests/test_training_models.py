@@ -5,6 +5,7 @@ from types import SimpleNamespace
 import numpy as np
 import pytest
 torch = pytest.importorskip("torch")
+pytest.importorskip("tqdm")
 
 from sst_training.epochs import run_epoch
 from sst_training.losses import C0Loss

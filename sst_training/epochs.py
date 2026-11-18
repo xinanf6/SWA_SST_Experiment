@@ -6,6 +6,7 @@ import time
 import torch
 
 from .data import tensor_batch
+from .progress import epoch_progress, update_progress
 
 
 def _accumulation_group_size(loader, batch_index: int, accumulation: int) -> int:
@@ -23,7 +24,7 @@ def run_epoch(model, loader, state: dict) -> dict:
         state["optimizer"].zero_grad(set_to_none=True)
     telemetry = state.setdefault("telemetry", {"updates": 0, "overflow_skips": 0})
     updates_before = telemetry["updates"]
-    with torch.set_grad_enabled(is_training):
+    with torch.set_grad_enabled(is_training), epoch_progress(loader, state) as progress:
         for batch_index, source in enumerate(loader):
             batch = tensor_batch(source, state["device"])
             with torch.cuda.amp.autocast(enabled=state["amp"]):
@@ -32,14 +33,19 @@ def run_epoch(model, loader, state: dict) -> dict:
             if is_training:
                 _backward_step(losses["total"], loader, dict(state, batch_index=batch_index,
                                batch_samples=batch["base"].shape[0]))
-            for name in totals:
-                totals[name] += float(losses[name].detach())
+            _accumulate_losses(totals, losses)
+            update_progress(progress, totals, state)
     if state["device"].type == "cuda":
         torch.cuda.synchronize()
     if is_training and telemetry["updates"] == updates_before:
         raise FloatingPointError("Epoch performed no finite optimizer updates")
     return _epoch_result(totals, {"elapsed": time.perf_counter() - started,
                                   "weight": state["loss"].auxiliary_weight, "samples": len(loader.dataset)})
+
+
+def _accumulate_losses(totals: dict, losses: dict) -> None:
+    for name in totals:
+        totals[name] += float(losses[name].detach())
 
 
 def _backward_step(loss: torch.Tensor, loader, state: dict) -> None:

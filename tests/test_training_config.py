@@ -41,3 +41,8 @@ def test_prediction_requires_explicit_checkpoint_and_output():
     parsed = build_parser().parse_args(["predict", "--checkpoint", "best.pt", "--output", "predictions.nc"])
     assert parsed.split == "validation"
     assert not parsed.allow_smoke_checkpoint
+
+
+def test_train_progress_is_enabled_by_default_and_has_optional_disable_flag():
+    assert not build_parser().parse_args(["train"]).no_progress
+    assert build_parser().parse_args(["train", "--no-progress"]).no_progress

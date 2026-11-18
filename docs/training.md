@@ -35,6 +35,16 @@ python -m sst_training train --config configs/training_c0.json --resume
 
 训练使用AdamW、lr=1e−3、weight_decay=1e−5、batch=2、梯度累积2、最多50轮、早停8轮、平台3轮后学习率减半、梯度裁剪1。最后不足整批的累积组按真实样本数加权。AMP溢出会降低缩放并记录跳过次数；没有任何有效更新的训练轮次会报错。
 
+训练和验证默认各显示批次进度条，标明`Epoch 当前轮/配置上限 Train`或`Valid`，含已完成/总批次数、累计SST MSE（℃²）、累计辅助损失、当前学习率、已用时间、当前阶段预计剩余时间和批次速度。默认完整训练每轮1790个训练批次、352个验证批次。进度条约每秒刷新，避免频繁终端输出；每轮原有MSE汇总继续打印。
+
+进度条写入stderr；ETA只针对当前训练或验证阶段，不包含后续阶段、检查点保存或全部剩余轮次。重定向日志时可关闭进度条：
+
+```powershell
+python -m sst_training train --config configs/training_c0.json --no-progress
+```
+
+已经运行的Python进程不会自动加载新增显示；需在保存了`last.pt`后通过`--resume`重启才能看到。不要为了显示进度中断尚未保存检查点的首轮。已审计的旧版与这次纯显示更新的代码指纹记录在`sst_training/checkpoint_compatibility.json`，允许恢复已有检查点，保留原始运行记录；数据、配置、模型和未知代码版本的校验不会放宽。
+
 温度主损失在℃空间按核心海洋面积权重计算，3个提前期等权；辅助损失比较学习位移与对应历史标准化uo/vo，权重0.1，保留原有启发式含义。验证以物理单位SST MSE选择best。
 
 训练只读取训练/验证分区。每轮结束保存：

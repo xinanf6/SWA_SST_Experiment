@@ -17,7 +17,7 @@ from .epochs import run_epoch
 from .losses import C0Loss
 from .models.dspg import ModelSettings
 from .models.predictor import C0Predictor
-from .runtime import (code_fingerprint, resolve_device, restore_rng, rng_state,
+from .runtime import (code_fingerprint, compatible_code_hashes, resolve_device, restore_rng, rng_state,
                       save_checkpoint, seed_everything)
 
 
@@ -40,6 +40,8 @@ def _prepare_output(root: Path, metadata: dict, resume: bool) -> None:
             raise DataValidationError("Training output already exists; use --resume or another output directory")
         saved = read_json(root / "run.json")
         for name in ("run_identity", "config_fingerprint", "training_code_sha256", "kind", "limits"):
+            if name == "training_code_sha256" and compatible_code_hashes(saved.get(name), metadata[name]):
+                continue
             if saved.get(name) != metadata[name]:
                 raise DataValidationError("Training resume mismatch for %s" % name)
         return
@@ -70,6 +72,8 @@ def _resume_state(root: Path, state: dict) -> None:
     saved = torch.load(root / "last.pt", map_location="cpu")
     expected = read_json(root / "run.json")
     for name in ("run_identity", "config_fingerprint", "training_code_sha256", "kind", "limits"):
+        if name == "training_code_sha256" and compatible_code_hashes(saved.get("metadata", {}).get(name), expected[name]):
+            continue
         if saved.get("metadata", {}).get(name) != expected[name]:
             raise DataValidationError("Checkpoint metadata mismatch for %s" % name)
     for name in ("model", "optimizer", "scheduler", "scaler"):
@@ -92,6 +96,7 @@ def run_training(config, options: dict = None) -> dict:
     _prepare_output(config.output_root, metadata, options.get("resume", False))
     seed_everything(config.seed)
     state = _training_state(context, config)
+    state["progress_enabled"] = options.get("progress", True)
     if options.get("resume"):
         _resume_state(config.output_root, state)
     training = TorchSSTDataset(context.root, "train")
@@ -141,7 +146,8 @@ def _fit_epochs(state: dict, datasets: dict, options: dict) -> None:
         training = run_epoch(state["model"], loader, state)
         validation_loader = build_loader(datasets["validation"], config,
                     {"limit": options.get("validation_limit"), "cuda": state["amp"]})
-        validation = run_epoch(state["model"], validation_loader, dict(state, optimizer=None))
+        validation = run_epoch(state["model"], validation_loader, dict(state, optimizer=None,
+                               current_learning_rate=state["optimizer"].param_groups[0]["lr"]))
         _finish_epoch(state, {"training": training, "validation": validation}, options["metadata"])
         print("Epoch %d: train MSE %.6f, validation MSE %.6f" %
               (state["epoch"], training["sst_mse_C2"], validation["sst_mse_C2"]), flush=True)

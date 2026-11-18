@@ -8,6 +8,7 @@ import json
 import numpy as np
 import pytest
 torch = pytest.importorskip("torch")
+pytest.importorskip("tqdm")
 
 from test_pipeline import create_pipeline_fixture
 from sst_analysis.context import load_context
@@ -155,3 +156,35 @@ def test_failed_prediction_keeps_existing_file_and_removes_temporary(fixture, mo
                                       "output": path, "overwrite": True})
     assert path.read_bytes() == b"existing-artifact"
     assert not path.with_name(path.name + ".tmp").exists()
+
+
+def test_progress_does_not_change_training_weights_or_rng(fixture):
+    first = replace(fixture, output_root=fixture.output_root.parent / "visible")
+    second = replace(fixture, output_root=fixture.output_root.parent / "hidden")
+    run_training(first, {"progress": True})
+    run_training(second, {"progress": False})
+    visible = torch.load(first.output_root / "last.pt", map_location="cpu")
+    hidden = torch.load(second.output_root / "last.pt", map_location="cpu")
+    for name, value in visible["model"].items():
+        torch.testing.assert_close(value, hidden["model"][name], rtol=0, atol=0)
+    torch.testing.assert_close(visible["rng"]["torch"], hidden["rng"]["torch"], rtol=0, atol=0)
+
+
+def test_progress_update_can_resume_old_checkpoints_but_rejects_unknown_code(fixture):
+    legacy = "eb8e3f3d5c9a847be8bb61e8f5095916a8258f23c0fd08ac925dffa07278a31a"
+    run_training(fixture, {"epochs": 2, "progress": False})
+    run_path = fixture.output_root / "run.json"
+    manifest = json.loads(run_path.read_text())
+    manifest["training_code_sha256"] = legacy
+    run_path.write_text(json.dumps(manifest))
+    checkpoint = torch.load(fixture.output_root / "last.pt", map_location="cpu")
+    checkpoint["metadata"]["training_code_sha256"] = legacy
+    torch.save(checkpoint, fixture.output_root / "last.pt")
+    result = run_training(fixture, {"resume": True})
+    assert result["epochs_completed"] == 4
+    run_training(fixture, {"resume": True})
+    checkpoint = torch.load(fixture.output_root / "last.pt", map_location="cpu")
+    checkpoint["metadata"]["training_code_sha256"] = "unknown-training-code"
+    torch.save(checkpoint, fixture.output_root / "last.pt")
+    with pytest.raises(DataValidationError, match="training_code_sha256"):
+        run_training(fixture, {"resume": True})

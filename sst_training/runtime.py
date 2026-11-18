@@ -1,6 +1,7 @@
 """Reproducible runtime, code identity and atomic training checkpoints."""
 
 import hashlib
+import json
 import os
 from pathlib import Path
 import random
@@ -32,6 +33,18 @@ def code_fingerprint() -> str:
         digest.update(str(path.relative_to(Path(__file__).parent)).encode("utf-8"))
         digest.update(path.read_bytes())
     return digest.hexdigest()
+
+
+def compatible_code_hashes(saved: str, expected: str) -> bool:
+    """Only explicitly audited display-only releases may share an old checkpoint."""
+    if saved == expected:
+        return True
+    path = Path(__file__).parent / "checkpoint_compatibility.json"
+    with path.open(encoding="utf-8") as handle:
+        groups = json.load(handle)["groups"]
+    current = code_fingerprint()
+    return any(current in group["hashes"] and saved in group["hashes"] and expected in group["hashes"]
+               for group in groups)
 
 
 def rng_state() -> dict:
