@@ -119,7 +119,7 @@ class PreparedSSTDataset:
 
     def _masked_copy(self, values: np.ndarray, group: str) -> np.ndarray:
         mask = self.metadata.get("gradient_mask", self.ocean_mask) if group == "front" else self.ocean_mask
-        return np.where(mask, values, 0.0).astype(np.float32)
+        return np.where(mask, values, np.float32(0))
 
     @staticmethod
     def _target_indices(row: pd.Series) -> list:
@@ -131,23 +131,41 @@ class PreparedSSTDataset:
 
     def __getitem__(self, sample_number: int) -> dict:
         """Return independent arrays so callers cannot mutate the shared memmaps."""
+        return self.read_sample(sample_number)
+
+    def read_sample(self, sample_number: int, *, include_front: bool = True,
+                    include_heat_increment: bool = True) -> dict:
+        """Materialize the shared inputs and only the requested optional branches."""
         if not self.arrays:
             raise DataValidationError("Dataset is closed; create a new PreparedSSTDataset")
         row = self.sample_index.iloc[sample_number]
         sst_slice = slice(int(row.sst_start_index), int(row.sst_end_index) + 1)
         environment_slice = slice(int(row.environment_start_index), int(row.environment_end_index) + 1)
-        base = np.array(self.arrays["base"][sst_slice], copy=True)
-        base[:, 1:] = self.arrays["base"][environment_slice, 1:]
+        base = self._base_history(sst_slice, environment_slice)
         target_indices = self._target_indices(row)
-        last_heat = self._physical_values(self.arrays["thermal"][int(row.environment_end_index), -1], "heat_increment")
-        leads = np.arange(1, len(target_indices) + 1, dtype=np.float32)[:, None, None, None]
-        return {
-            "base": self._masked_copy(base, "base"),
-            "front": self._masked_copy(self.arrays["front"][sst_slice], "front"),
+        sample = {
+            "base": base,
             "thermal": self._masked_copy(self.arrays["thermal"][environment_slice], "thermal"),
             "target": self._masked_copy(self.arrays["base"][target_indices, :1], "base"),
             "last_sst": self._physical_values(self.arrays["base"][int(row.origin_index), :1], "sst"),
-            "heat_increment": leads * last_heat[None, None],
             "origin_date": str(row.origin_date),
             "target_dates": self.dates[target_indices].copy(),
         }
+        if include_front:
+            sample["front"] = self._masked_copy(self.arrays["front"][sst_slice], "front")
+        if include_heat_increment:
+            sample["heat_increment"] = self._heat_prior(int(row.environment_end_index), len(target_indices))
+        return sample
+
+    def _base_history(self, sst_slice: slice, environment_slice: slice) -> np.ndarray:
+        values = self.arrays["base"]
+        base = np.empty_like(values[sst_slice], subok=False)
+        base[:, :1] = values[sst_slice, :1]
+        base[:, 1:] = values[environment_slice, 1:]
+        np.copyto(base, np.float32(0), where=~self.ocean_mask)
+        return base
+
+    def _heat_prior(self, environment_end: int, lead_count: int) -> np.ndarray:
+        heat = self._physical_values(self.arrays["thermal"][environment_end, -1], "heat_increment")
+        leads = np.arange(1, lead_count + 1, dtype=np.float32)[:, None, None, None]
+        return leads * heat[None, None]

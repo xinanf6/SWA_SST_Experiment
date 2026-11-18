@@ -8,6 +8,8 @@
 
 数据适配直接包装 `PreparedSSTDataset`，不移动日期、不重新归一化、不展开保存滑动窗口。基础输入 `[B,14,7,H,W]`、热力输入 `[B,14,3,H,W]`、目标 `[B,3,1,H,W]`。Windows worker重新打开只读memmap；默认workers=0，可通过配置测试增加。
 
+C0按需读取基础历史、热力历史、标签和起报SST。完整样本接口仍可读取锋面和显式热力增量。RTX 3060的两次短程对比各测16个完整网格批次，按需读取平均约0.91秒/批，旧读取约1.47秒/批。两个worker平均约1.35秒/批，计入启动时间。短程结果会随文件缓存变化，默认仍使用0个worker。
+
 主干保留多尺度卷积与CBAM、学习位移和扩散模块、全局BiLSTM、像素ConvBiLSTM、全局局部门控融合与三提前期解码。原文件哈希及锁定参数保存在 `sst_training/models/dspg_provenance.json`，运行时不依赖原项目文件。可选的原代码一致性测试在本机原文件存在时执行；其他机器可用 `DSPG_REFERENCE_PATH` 指定相同版本，否则明确跳过该项。
 
 热力编码为3→16→32两层卷积，加1×1投影后以初始0.1的可学习标量加入32通道空间特征。额外模块使用独立、随种子变化的初始化随机流，主干初始化不受额外模块消费随机数影响。
@@ -43,7 +45,7 @@ python -m sst_training train --config configs/training_c0.json --resume
 python -m sst_training train --config configs/training_c0.json --no-progress
 ```
 
-已经运行的Python进程不会自动加载新增显示；需在保存了`last.pt`后通过`--resume`重启才能看到。不要为了显示进度中断尚未保存检查点的首轮。已审计的旧版与这次纯显示更新的代码指纹记录在`sst_training/checkpoint_compatibility.json`，允许恢复已有检查点，保留原始运行记录；数据、配置、模型和未知代码版本的校验不会放宽。
+已运行的Python进程要在保存`last.pt`后通过`--resume`重新启动才能加载进度显示。尚未保存检查点的首轮中断后需要重新开始。`sst_training/checkpoint_compatibility.json`记录已验证等价的进度显示和C0按需读取版本，供恢复时核对代码指纹。
 
 温度主损失在℃空间按核心海洋面积权重计算，3个提前期等权；辅助损失比较学习位移与对应历史标准化uo/vo，权重0.1，保留原有启发式含义。验证以物理单位SST MSE选择best。
 

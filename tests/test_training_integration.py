@@ -55,6 +55,31 @@ def test_adapter_preserves_lag_dates_and_windows(fixture):
     assert dataset.prepared.arrays == {}
 
 
+def test_c0_skips_unused_fields_and_reads_each_base_channel_at_its_own_clock(fixture):
+    dataset = TorchSSTDataset(fixture.prepared_root, "train")
+    try:
+        prepared = dataset.prepared
+        original = prepared[0]
+        row = prepared.sample_index.iloc[0]
+        raw = prepared.arrays["base"]
+        previous_base = np.array(raw[row.sst_start_index:row.sst_end_index + 1])
+        previous_base[:, 1:] = raw[row.environment_start_index:row.environment_end_index + 1, 1:]
+        previous_base = np.where(prepared.ocean_mask, previous_base, 0.0).astype(np.float32)
+        front = prepared.arrays.pop("front")
+        try:
+            sample = dataset[0]
+        finally:
+            prepared.arrays["front"] = front
+        assert "front" not in sample and "heat_increment" not in sample
+        np.testing.assert_array_equal(sample["base"].numpy(), previous_base)
+        for name in ("thermal", "target", "last_sst"):
+            np.testing.assert_array_equal(sample[name].numpy(), original[name])
+        sample["base"].zero_()
+        np.testing.assert_array_equal(dataset[0]["base"].numpy(), previous_base)
+    finally:
+        dataset.close()
+
+
 def test_epoch_boundary_resume_matches_uninterrupted_training(fixture):
     uninterrupted = replace(fixture, output_root=fixture.output_root.parent / "uninterrupted")
     run_training(uninterrupted)

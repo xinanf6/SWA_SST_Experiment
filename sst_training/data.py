@@ -23,7 +23,7 @@ class TorchSSTDataset(Dataset):
         return len(self.prepared)
 
     def __getitem__(self, position: int) -> dict:
-        source = self.prepared[position]
+        source = self.prepared.read_sample(position, include_front=False, include_heat_increment=False)
         tensors = {name: torch.from_numpy(source[name]) for name in TENSOR_KEYS}
         return dict(tensors, origin_date=source["origin_date"],
                     target_dates=source["target_dates"].astype("datetime64[D]").astype(str).tolist())

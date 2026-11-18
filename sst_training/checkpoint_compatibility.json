@@ -1,10 +1,11 @@
 {
   "groups": [
     {
-      "reason": "Audited progress-display-only update. Same model, loss, batch order, gradient accumulation, optimizer and RNG behavior. Training math unchanged.",
+      "reason": "Audited equivalent progress display and on-demand C0 input reads. Model inputs, loss, batch order, optimization and RNG behavior are unchanged.",
       "hashes": [
         "eb8e3f3d5c9a847be8bb61e8f5095916a8258f23c0fd08ac925dffa07278a31a",
-        "e791afab71ec9ccd2504d72f39c26f58f1d771b64c4a618bedb29b17a2265758"
+        "e791afab71ec9ccd2504d72f39c26f58f1d771b64c4a618bedb29b17a2265758",
+        "983e5a150e182ceb5145836ef6736bae191e063b52999c0924db9831581668ae"
       ]
     }
   ]
