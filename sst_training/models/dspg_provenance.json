@@ -1,0 +1,21 @@
+{
+  "source_reference": "DSPG/DSPG_code/model.py",
+  "source_sha256": "435b36f577243a5c98053a5772168c7201bc03a400f33b53b06967ee148d3baa",
+  "original_config_sha256": "6cfd20355bcaff9d42543a01f73c6b594e49406982481de0484da541967e9fe6",
+  "pinned": {
+    "spatial_channels": 32,
+    "global_hidden": 128,
+    "pixel_hidden": 32,
+    "fusion_channels": 256,
+    "decoder_channels": 128,
+    "decoder_hidden": 64,
+    "layers": 1,
+    "pred_len": 3,
+    "diffusion_mode": "trainable",
+    "diffusion_initial_scale": 0.1,
+    "learned_displacement_scale_pixels": 5.0,
+    "residual_displacement_scale_pixels": 2.0,
+    "use_residual": true
+  },
+  "attribution": "Port of the researchers existing DSPG implementation; retains learned displacement and standardized-current auxiliary semantics."
+}

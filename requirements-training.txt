@@ -1,0 +1,3 @@
+-r requirements.txt
+# Tested local runtime. Keep an existing working CUDA installation unchanged.
+torch==1.12.0

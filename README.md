@@ -141,3 +141,5 @@ python -m sst_preprocessing rebuild --config configs/preprocess_window_qc.json -
 `sst_analysis` 提供统一温度／梯度／锋线评价、分季节／锋区／MLD分组、配对时间块Bootstrap以及训练期观测诊断。只读取真实模型预测，不生成无训练基线。命令、预测格式及指标定义见 [完整使用说明](docs/analysis.md)。
 
 诊断完成后的模型开发顺序、训练对照、算力验收和论文证据安排见 [下一步实现计划](docs/next_implementation_plan.md)。
+
+第一阶段C0训练—验证—预测闭环已实现，入口为 `python -m sst_training`，配置为 `configs/training_c0.json`。先运行短程检查；命令、恢复规则及正式训练说明见 [C0训练使用说明](docs/training.md)。
