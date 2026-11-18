@@ -5,17 +5,18 @@ from torch import nn
 import torch.nn.functional as functional
 
 
-def displacement_network(channels: int) -> nn.Sequential:
-    return nn.Sequential(nn.Conv2d(channels, 32, 3, padding=1), nn.ReLU(inplace=True),
-                         nn.Conv2d(32, 2, 3, padding=1), nn.Tanh())
+def displacement_network(channels: int, hidden_channels: int = 32) -> nn.Sequential:
+    return nn.Sequential(nn.Conv2d(channels, hidden_channels, 3, padding=1), nn.ReLU(inplace=True),
+                         nn.Conv2d(hidden_channels, 2, 3, padding=1), nn.Tanh())
 
 
 class AdvectionDiffusionBlock(nn.Module):
     """Pin original trainable diffusion, learned correction and 5/2 pixel scales."""
 
-    def __init__(self, channels: int) -> None:
+    def __init__(self, channels: int, displacement_channels: int = 32) -> None:
         super().__init__()
-        self.velocity_net, self.residual_net = displacement_network(5), displacement_network(channels)
+        self.velocity_net = displacement_network(5, displacement_channels)
+        self.residual_net = displacement_network(channels, displacement_channels)
         self.diffusion_conv = nn.Conv2d(1, 1, 3, padding=1, bias=False)
         with torch.no_grad():
             for network in (self.velocity_net, self.residual_net):

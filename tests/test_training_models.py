@@ -12,6 +12,7 @@ from sst_training.losses import C0Loss
 from sst_training.models.dspg import ModelSettings
 from sst_training.models.physics import AdvectionDiffusionBlock
 from sst_training.models.predictor import C0Predictor
+from sst_training.models.parallel import CompactParallelBackbone
 
 
 TINY = ModelSettings(spatial_channels=8, global_hidden=8, pixel_hidden=4,
@@ -52,6 +53,42 @@ def test_c0_shapes_and_all_trainable_branches_receive_finite_gradients():
     for name, parameter in model.named_parameters():
         assert parameter.grad is not None, name
         assert torch.isfinite(parameter.grad).all(), name
+
+
+def test_parallel8_uses_first_lag_and_keeps_all_spatial_cells():
+    model = C0Predictor(TINY, STATISTICS, "parallel8")
+    assert isinstance(model.backbone, CompactParallelBackbone)
+    features = model.backbone.spatial_encoder(_batch()["base"])
+    assert features.shape == (1, 14, 8, 7, 9)
+    fusion = model.backbone.temporal_fusion
+    daily_features = torch.zeros(1, 14, 9, 7, 9)
+    with torch.no_grad():
+        for parameter in fusion.parameters():
+            parameter.zero_()
+        fusion.mix.weight[0, 0, 0, 0] = 1.0
+        daily_features[0, 0, 0, 3, 4] = 2.0
+        actual = fusion(daily_features)
+    assert actual.shape == (1, 16, 7, 9)
+    assert actual[0, 0, 3, 4] == 2.0
+    assert torch.count_nonzero(actual) == 1
+
+
+def test_parallel8_physics_batching_matches_per_day_and_loss_backpropagates():
+    model = C0Predictor(TINY, STATISTICS, "parallel8")
+    batch = _batch()
+    output = model(batch)
+    assert output["predictions"].shape == (1, 3, 1, 7, 9)
+    assert output["displacement_pixels"].shape == (1, 14, 2, 7, 9)
+    block = model.backbone.physics_block
+    features = model.backbone.spatial_encoder(batch["base"])
+    daily = [block(features[:, index], batch["base"][:, index, :5]) for index in range(14)]
+    flat = block(features.flatten(0, 1), batch["base"][:, :, :5].flatten(0, 1))
+    for channel in range(2):
+        torch.testing.assert_close(flat[channel].unflatten(0, (1, 14)),
+                                   torch.stack([pair[channel] for pair in daily], dim=1))
+    C0Loss(_context())(output, batch)["total"].backward()
+    for name, parameter in model.named_parameters():
+        assert parameter.grad is not None and torch.isfinite(parameter.grad).all(), name
 
 
 def test_residual_uses_standard_deviation_without_adding_temperature_mean():

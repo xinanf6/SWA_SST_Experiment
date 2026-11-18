@@ -12,8 +12,7 @@ from sst_analysis.context import load_context
 from sst_preprocessing.errors import DataValidationError
 
 from .data import TorchSSTDataset, build_loader, tensor_batch
-from .models.dspg import ModelSettings
-from .models.predictor import C0Predictor
+from .models.predictor import build_predictor
 from .runtime import resolve_device
 
 
@@ -35,7 +34,7 @@ def export_predictions(config, options: dict) -> dict:
     if saved["metadata"]["kind"] == "smoke" and not options.get("allow_smoke_checkpoint", False):
         raise DataValidationError("Smoke checkpoints require --allow-smoke-checkpoint for explicit debug export")
     device = resolve_device(config.device)
-    model = C0Predictor(ModelSettings(**config.architecture), context.statistics).to(device).eval()
+    model = build_predictor(config, context.statistics).to(device).eval()
     model.load_state_dict(saved["model"])
     dataset = TorchSSTDataset(context.root, options.get("split", "validation"))
     temporary = output.with_name(output.name + ".tmp")
@@ -56,8 +55,8 @@ def _validate_checkpoint(saved: dict, identity: str, config) -> None:
     metadata = saved.get("metadata", {})
     if metadata.get("run_identity") != identity or metadata.get("config_fingerprint") != config.fingerprint():
         raise DataValidationError("Checkpoint data identity or training configuration does not match")
-    if saved.get("epoch", 0) < 1 or metadata.get("model") != "C0":
-        raise DataValidationError("Prediction requires a trained C0 epoch checkpoint")
+    if saved.get("epoch", 0) < 1 or metadata.get("model") != config.model_name:
+        raise DataValidationError("Prediction requires a trained %s epoch checkpoint" % config.model_name)
 
 
 def _create_file(handle, dataset: TorchSSTDataset, context) -> tuple:
@@ -93,7 +92,7 @@ def _write_predictions(model, dataset: TorchSSTDataset, state: dict) -> None:
     with netCDF4.Dataset(str(state["path"]), "w") as handle:
         prediction, residual, last_sst, origins, targets = _create_file(handle, dataset, state["context"])
         handle.training_kind = state["metadata"]["kind"]
-        handle.model_name = "C0"
+        handle.model_name = state["metadata"]["model"]
         position = 0
         with torch.no_grad():
             for batch in loader:

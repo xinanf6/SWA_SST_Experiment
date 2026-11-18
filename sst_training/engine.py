@@ -1,6 +1,5 @@
 """C0 training orchestration; best weights always use validation Celsius MSE."""
 
-from dataclasses import asdict
 import json
 from pathlib import Path
 
@@ -15,18 +14,20 @@ from .config import validate_training_config
 from .data import TorchSSTDataset, build_loader
 from .epochs import run_epoch
 from .losses import C0Loss
-from .models.dspg import ModelSettings
-from .models.predictor import C0Predictor
+from .models.predictor import build_predictor, describe_architecture
 from .runtime import (code_fingerprint, compatible_code_hashes, resolve_device, restore_rng, rng_state,
                       save_checkpoint, seed_everything)
+
+
+RESUME_KEYS = ("run_identity", "config_fingerprint", "training_code_sha256", "model", "kind", "limits")
 
 
 def _run_metadata(context, config, options: dict) -> dict:
     limits = {name: options.get(name) for name in ("train_limit", "validation_limit")}
     device = resolve_device(config.device)
-    return {"model": "C0", "run_identity": context.run_identity,
+    return {"model": config.model_name, "run_identity": context.run_identity,
             "config_fingerprint": config.fingerprint(), "training_code_sha256": code_fingerprint(),
-            "config": config.to_dict(), "architecture": asdict(ModelSettings(**config.architecture)),
+            "config": config.to_dict(), "architecture": describe_architecture(config),
             "kind": options.get("kind", "full_training"), "limits": limits,
             "software": {"torch": torch.__version__, "cuda_runtime": torch.version.cuda},
             "device": str(device), "gpu": torch.cuda.get_device_name(device) if device.type == "cuda" else None,
@@ -39,7 +40,7 @@ def _prepare_output(root: Path, metadata: dict, resume: bool) -> None:
         if not resume:
             raise DataValidationError("Training output already exists; use --resume or another output directory")
         saved = read_json(root / "run.json")
-        for name in ("run_identity", "config_fingerprint", "training_code_sha256", "kind", "limits"):
+        for name in RESUME_KEYS:
             if name == "training_code_sha256" and compatible_code_hashes(saved.get(name), metadata[name]):
                 continue
             if saved.get(name) != metadata[name]:
@@ -55,7 +56,7 @@ def _prepare_output(root: Path, metadata: dict, resume: bool) -> None:
 
 def _training_state(context, config) -> dict:
     device = resolve_device(config.device)
-    model = C0Predictor(ModelSettings(**config.architecture), context.statistics).to(device)
+    model = build_predictor(config, context.statistics).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=config.scheduler_patience)
     has_amp = bool(config.amp and device.type == "cuda")
@@ -71,7 +72,7 @@ def _resume_state(root: Path, state: dict) -> None:
         raise DataValidationError("Cannot resume: last.pt is missing")
     saved = torch.load(root / "last.pt", map_location="cpu")
     expected = read_json(root / "run.json")
-    for name in ("run_identity", "config_fingerprint", "training_code_sha256", "kind", "limits"):
+    for name in RESUME_KEYS:
         if name == "training_code_sha256" and compatible_code_hashes(saved.get("metadata", {}).get(name), expected[name]):
             continue
         if saved.get("metadata", {}).get(name) != expected[name]:
@@ -128,7 +129,8 @@ def _training_summary(state: dict, metadata: dict) -> dict:
     if metadata["kind"] == "smoke":
         status = "smoke_complete"
     memory = torch.cuda.max_memory_allocated(state["device"]) / (1024 ** 3) if state["device"].type == "cuda" else 0.
-    return {"status": status, "run_identity": metadata["run_identity"], "epochs_completed": state["epoch"],
+    return {"status": status, "model": metadata["model"], "run_identity": metadata["run_identity"],
+            "epochs_completed": state["epoch"],
             "best_validation_mse_C2": state["best_mse"], "kind": metadata["kind"], "limits": metadata["limits"],
             "parameter_count": sum(value.numel() for value in state["model"].parameters()),
             "device": str(state["device"]), "peak_allocated_GiB": memory,

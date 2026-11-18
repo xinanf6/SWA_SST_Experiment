@@ -7,6 +7,7 @@ import json
 
 import numpy as np
 import pytest
+import xarray as xr
 torch = pytest.importorskip("torch")
 pytest.importorskip("tqdm")
 
@@ -92,6 +93,27 @@ def test_epoch_boundary_resume_matches_uninterrupted_training(fixture):
         torch.testing.assert_close(value, second["model"][name], rtol=0, atol=0)
     assert [row["validation"]["sst_mse_C2"] for row in first["history"]] == [
             row["validation"]["sst_mse_C2"] for row in second["history"]]
+
+
+def test_parallel8_train_resume_and_export_keep_model_identity(fixture):
+    compact = replace(fixture, model_variant="parallel8", architecture={})
+    assert compact.fingerprint() != fixture.fingerprint()
+    result = run_training(compact, {"epochs": 1, "progress": False})
+    assert result["model"] == "C0_parallel8"
+    assert result["parameter_count"] == 28429
+    assert run_training(compact, {"epochs": 1, "resume": True, "progress": False})["epochs_completed"] == 2
+    forecast = compact.output_root / "compact.nc"
+    options = {"checkpoint": compact.output_root / "best.pt", "output": forecast, "split": "validation"}
+    with pytest.raises(DataValidationError, match="configuration"):
+        export_predictions(fixture, options)
+    assert export_predictions(compact, options)["origins"] == 1
+    context = load_context(compact.prepared_root)
+    with ForecastFile(forecast, context, "validation") as predictions:
+        assert predictions.read(slice(0, 1)).shape == (1, 3, 7, 7)
+    with xr.open_dataset(forecast) as dataset:
+        assert dataset.attrs["model_name"] == "C0_parallel8"
+        np.testing.assert_allclose(dataset.predictions.values,
+                                   dataset.last_sst.values[:, None] + dataset.residual.values)
 
 
 def test_trained_checkpoint_exports_full_forecast_and_scores_canonical_truth(fixture):

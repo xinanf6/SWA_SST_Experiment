@@ -74,6 +74,26 @@ python -m sst_analysis evaluate --config configs/analysis.json --predictions out
 
 短程检查点默认拒绝用于预测；仅做通路调试时可显式添加 `--allow-smoke-checkpoint`。此类文件带有 `training_kind=smoke`，应存入带smoke标记的独立目录，不作为正式模型结果。完整验证分区导出可以检验文件契约，但不能把小样本训练后的分数用于论文结论。
 
+## 8 通道并行时序 C0
+
+紧凑版使用独立配置 `configs/training_c0_parallel8.json`，模型标识为 `C0_parallel8`。三组膨胀卷积将逐日基础输入编码为 8 通道，热力编码为 3→8→8，逐日位移头的中间宽度为 4。平流与扩散将历史日期合并到批次维并行计算。局部时序分支把 14 天的有序特征融合为 16 通道，再用两层分组空间卷积传播。所有局部空间特征和预测均保留 270×250 网格。
+
+沿用 C0 残差输出 `T_t + R`、核心区面积加权损失和海流辅助监督。默认采用 batch=2 和梯度累积 2，训练与验证使用最新的 3580 和 704 个样本索引。
+
+```powershell
+python -m sst_training smoke --config configs/training_c0_parallel8.json
+python -m sst_training train --config configs/training_c0_parallel8.json
+```
+
+短程运行写入 `output/training/C0_parallel8_seed2026_smoke/`。正式训练写入 `output/training/C0_parallel8_seed2026/`。恢复时使用同一配置加 `--resume`。配置和模型标识用于检查恢复和导出，原版 DSPG 的检查点须继续搭配 `configs/training_c0.json`。
+
+完成正式训练后，使用对应检查点导出完整验证分区并沿用统一评价器。
+
+```powershell
+python -m sst_training predict --config configs/training_c0_parallel8.json --checkpoint output/training/C0_parallel8_seed2026/best.pt --split validation --output output/predictions/C0_parallel8_seed2026_validation.nc
+python -m sst_analysis evaluate --config configs/analysis.json --predictions output/predictions/C0_parallel8_seed2026_validation.nc --split validation --output-root output/analysis/C0_parallel8_seed2026_validation
+```
+
 ## 离线验收
 
 ```powershell

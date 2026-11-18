@@ -12,6 +12,10 @@ from sst_analysis.config import validate_output_location
 from sst_preprocessing.errors import ConfigurationError
 
 
+ORIGINAL_MODEL_VARIANT = "dspg"
+COMPACT_MODEL_VARIANT = "parallel8"
+
+
 @dataclass(frozen=True)
 class TrainingConfig:
     """Defaults follow the frozen experiment; architecture changes create a new run."""
@@ -32,6 +36,11 @@ class TrainingConfig:
     amp: bool = True
     device: str = "auto"
     architecture: dict = field(default_factory=dict)
+    model_variant: str = ORIGINAL_MODEL_VARIANT
+
+    @property
+    def model_name(self) -> str:
+        return "C0_parallel8" if self.model_variant == COMPACT_MODEL_VARIANT else "C0"
 
     def to_dict(self) -> dict:
         result = asdict(self)
@@ -42,6 +51,9 @@ class TrainingConfig:
     def fingerprint(self) -> str:
         values = self.to_dict()
         values.pop("output_root")
+        if self.model_variant == ORIGINAL_MODEL_VARIANT:
+            # The original DSPG checkpoints predate explicit variant selection.
+            values.pop("model_variant")
         return hashlib.sha256(json.dumps(values, sort_keys=True).encode("utf-8")).hexdigest()
 
 
@@ -73,6 +85,10 @@ def validate_training_config(config: TrainingConfig) -> None:
         raise ConfigurationError("Training device must be auto, cpu or cuda")
     if config.weight_decay < 0 or config.auxiliary_weight < 0:
         raise ConfigurationError("Training loss/decay weights must be nonnegative")
+    if config.model_variant not in (ORIGINAL_MODEL_VARIANT, COMPACT_MODEL_VARIANT):
+        raise ConfigurationError("Training model_variant must be dspg or parallel8")
+    if config.model_variant == COMPACT_MODEL_VARIANT and config.architecture:
+        raise ConfigurationError("parallel8 uses fixed widths; leave architecture empty")
 
 
 def _validate_types(config: TrainingConfig) -> None:
