@@ -1,0 +1,37 @@
+{
+  "data_root": "../data",
+  "output_root": "../output/processed_window_qc",
+  "start_date": "2011-01-01",
+  "end_date": "2024-12-31",
+  "splits": {
+    "train": [
+      "2011-01-01",
+      "2020-12-31"
+    ],
+    "validation": [
+      "2021-01-01",
+      "2022-12-31"
+    ],
+    "test": [
+      "2023-01-01",
+      "2024-12-31"
+    ]
+  },
+  "history_days": 14,
+  "prediction_days": 3,
+  "environment_lag_days": 1,
+  "mixed_layer_minimum_meters": 3.0,
+  "seawater_density": 1025.0,
+  "seawater_heat_capacity": 3990.0,
+  "minimum_interpolation_weight": 0.999999,
+  "expected_grid_shape": [
+    270,
+    250
+  ],
+  "expected_core_shape": [
+    260,
+    240
+  ],
+  "chunk_days": 7,
+  "compression_level": 1
+}

@@ -17,12 +17,14 @@ from .verification import verify_output
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Original SWA SST preprocessing protocol")
     commands = parser.add_subparsers(dest="command", required=True)
-    for name in ("inspect", "smoke", "run", "verify"):
+    for name in ("inspect", "smoke", "run", "verify", "rebuild"):
         command = commands.add_parser(name)
         command.add_argument("--config", type=Path, default=Path("configs/preprocess.json"))
         command.add_argument("--output-root", type=Path)
-        if name in ("run", "smoke"):
+        if name in ("run", "smoke", "rebuild"):
             command.add_argument("--resume", action="store_true")
+        if name == "rebuild":
+            command.add_argument("--source-root", type=Path, required=True)
         if name == "verify":
             command.add_argument("--quick", action="store_true", help="Skip full physical round-trip checks")
     return parser
@@ -43,6 +45,9 @@ def main() -> int:
             if args.output_root is None:
                 config = load_config(args.config, output_root=config.output_root.parent / "smoke")
             result = run_preprocessing(config, resume=args.resume, stop_after_months=1)
+        elif args.command == "rebuild":
+            from .rebuild import rebuild_from_physical
+            result = rebuild_from_physical(config, args.source_root, args.resume)
         else:
             result = run_preprocessing(config, resume=args.resume)
         print(json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False))

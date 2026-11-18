@@ -1,0 +1,6 @@
+{
+  "prepared_root": "../output/processed_window_qc",
+  "diagnostics_output": "../output/analysis/regional_diagnostics_window_qc",
+  "figure_dpi": 300,
+  "batch_size": 1
+}

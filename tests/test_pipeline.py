@@ -251,6 +251,39 @@ class PipelineTests(unittest.TestCase):
         self._assert_missing_day_artifacts(bad_day, expected_counts)
         self._assert_missing_day_dataset_access()
 
+    def test_training_heat_gap_excludes_windows_without_permanent_spatial_hole(self):
+        path = self.config.data_root / "ERA5" / "2020" / "ERA5_2020_01.nc"
+        with xr.open_dataset(path) as source:
+            modified = source.load()
+        modified["sshf"].values[0, 3, 3] = np.nan
+        modified.to_netcdf(path, mode="w")
+        report = _quiet_run(self.config)
+        self.assertEqual(report["sample_counts"], {"train": 0, "validation": 1, "test": 1})
+        with np.load(self.config.output_root / "grid_masks.npz") as masks:
+            self.assertTrue(masks["ocean_mask"][3, 3])
+            self.assertTrue(masks["gradient_mask"][3, 3])
+            self.assertFalse(masks["ocean_mask"][0, 0])
+        flags = pd.read_csv(self.config.output_root / "daily_quality.csv")
+        self.assertFalse(bool(flags.iloc[0].environment_valid))
+        self.assertTrue(bool(flags.iloc[0].sst_valid))
+        excluded = pd.read_csv(self.config.output_root / "excluded_samples.csv")
+        self.assertIn("2020-01-15", excluded.iloc[0].exclusion_reason)
+
+    def test_rebuild_copies_physical_fields_and_preserves_source(self):
+        from sst_preprocessing.rebuild import rebuild_from_physical
+        _quiet_run(self.config)
+        source = _load_physical(self.config.output_root)
+        rebuilt = dataclasses.replace(self.config, output_root=self.directory / "rebuilt")
+        with contextlib.redirect_stdout(io.StringIO()):
+            result = rebuild_from_physical(rebuilt, self.config.output_root)
+        self.assertEqual(result["sample_counts"], EXPECTED_COUNTS)
+        xr.testing.assert_equal(source, _load_physical(self.config.output_root))
+        copied = _load_physical(rebuilt.output_root)
+        for name in source.data_vars:
+            xr.testing.assert_equal(source[name], copied[name])
+        with self.assertRaisesRegex(DataValidationError, "separate"):
+            rebuild_from_physical(self.config, self.config.output_root)
+
     def _assert_missing_day_artifacts(self, bad_day: str, expected_counts: dict) -> None:
         physical = _load_physical(self.config.output_root)
         self.assertTrue(np.isnan(physical["sshf"].sel(time=bad_day).values[3, 3]))

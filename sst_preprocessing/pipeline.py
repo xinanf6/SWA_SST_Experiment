@@ -126,10 +126,12 @@ def _fit_grid_masks(context: PipelineContext) -> dict:
             training = _training_dates(dataset, context.config)
             if not training.sizes["time"]:
                 continue
-            valid = np.ones(metadata["core_mask"].shape, dtype=bool)
-            for name in BASE_VARIABLES + ("mixed_layer_depth", "net_heat_flux", "heat_increment"):
-                valid &= np.isfinite(training[name].values).all(axis=0)
-            ocean_mask = valid if ocean_mask is None else ocean_mask & valid
+            # A transient missing observation must remove windows, not ocean geography.
+            valid = np.ones((training.sizes["time"],) + metadata["core_mask"].shape, dtype=bool)
+            for name in ("sst", "uo", "vo", "mixed_layer_depth"):
+                valid &= np.isfinite(training[name].values)
+            monthly_ocean = valid.any(axis=0)
+            ocean_mask = monthly_ocean if ocean_mask is None else ocean_mask | monthly_ocean
     if ocean_mask is None or not (ocean_mask & metadata["core_mask"]).any():
         raise DataValidationError("Training sources have no common valid ocean in the core")
     metadata["ocean_mask"] = ocean_mask
@@ -162,6 +164,7 @@ def _fit_statistics(context: PipelineContext, grid: dict) -> dict:
              "variables": {name: dict(value.result(), units=VARIABLE_UNITS[name])
                            for name, value in moments.items()},
              "front_threshold_p90": threshold, "front_percentile_count": count,
+             "spatial_mask_policy": "Training union of complete SST/current/MLD ocean templates; transient gaps excluded by sample window",
              "normalization": "Unweighted population moments over training ocean; constant std uses scale=1"}
     write_json_atomic(context.root / "stats.json", stats)
     return stats

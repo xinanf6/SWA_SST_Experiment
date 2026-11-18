@@ -16,7 +16,7 @@ python -m pip install -r requirements-dev.txt
 
 **配置与命令**
 
-在仓库根目录运行。配置中的 `data_root`、`output_root` 相对于配置文件目录解析，默认对应仓库的 `data/` 和 `output/processed/`；`--output-root` 可覆盖输出位置。
+在仓库根目录运行。配置中的 `data_root`、`output_root` 相对于配置文件目录解析，默认对应仓库的 `data/` 和 `output/processed_window_qc/`；`--output-root` 可覆盖输出位置。
 
 ```powershell
 python -m sst_preprocessing inspect --config configs/preprocess.json
@@ -100,7 +100,7 @@ h_{\mathrm{eff}}=\max(h,3\,\mathrm m),\qquad
 from pathlib import Path
 from sst_preprocessing.dataset import PreparedSSTDataset
 
-with PreparedSSTDataset(Path("output/processed"), split="train") as dataset:
+with PreparedSSTDataset(Path("output/processed_window_qc"), split="train") as dataset:
     sample = dataset[0]
     print(len(dataset), sample["origin_date"])
     print(sample["base"].shape)        # (14, 7, 270, 250)
@@ -123,4 +123,19 @@ python -B -m pytest tests -q
 
 `pytest.ini` 将默认发现目录限定为 `tests`，避免导入根目录会联网或下载数据的旧测试脚本。离线测试覆盖跨年／闰日及分区隔离、真实尺寸核心区、海岸插值、常量与线性场梯度、热量符号、MLD 回填、3 m 下限、标准化往返和训练统计隔离。
 
-`tests/test_pipeline.py` 的 6 项合成数据端到端用例验证完整流水线与样本读取、断点续跑一致性、不同分块一致性、记录缺测并排除窗口，以及配置或输入改变时拒绝续跑。`tests/test_quality.py` 另验证不同来源时钟下的缺测排除边界。该验证与真实数据 `smoke` 的首月物理检查互为补充；全量处理完成情况由实际 `READY.json` 和质量报告确认。
+`tests/test_pipeline.py` 的 8 项合成数据端到端用例验证完整流水线与样本读取、断点续跑一致性、不同分块一致性、记录缺测并排除窗口，以及配置或输入改变时拒绝续跑。`tests/test_quality.py` 另验证不同来源时钟下的缺测排除边界。该验证与真实数据 `smoke` 的首月物理检查互为补充；全量处理完成情况由实际 `READY.json` 和质量报告确认。
+
+**缺测窗口与区域诊断**
+
+预处理模式版本2将固定海洋域与逐日缺测分开。固定域采用训练期至少一天同时具有完整SST、海流和MLD插值模板的格点；永久陆地仍被屏蔽。ERA5偶发缺测进入逐日质量记录，消费该日环境历史的窗口从所有模型共用索引排除，原始缺测值不填补。训练期统计只使用相应变量的有限值。
+
+新产物目录为 `output/processed_window_qc/`，配置为 `configs/preprocess_window_qc.json`。旧的 `output/processed/` 保留用于追溯。掩膜、统计量、P90、归一化数组和样本索引必须使用同一批次，不能把新掩膜叠到旧数组上。
+
+从已有完整物理场重建，先核对原始输入清单与全部数值配置，再复制物理文件并更新运行身份，物理场数值保持原样：
+
+```powershell
+python -m sst_preprocessing rebuild --config configs/preprocess_window_qc.json --source-root output/processed
+# 中断时对同一命令添加 --resume。
+```
+
+`sst_analysis` 提供统一温度／梯度／锋线评价、分季节／锋区／MLD分组、配对时间块Bootstrap以及训练期观测诊断。只读取真实模型预测，不生成无训练基线。命令、预测格式及指标定义见 [完整使用说明](docs/analysis.md)。

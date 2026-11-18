@@ -76,7 +76,8 @@ def _verify_normalized_month(dataset: xr.Dataset, state: dict) -> None:
             _check_variable_roundtrip(dataset[name].values, values,
                                       {"name": name, "mask": mask, "statistics": state["statistics"]})
             if is_train.any():
-                state["moments"][name].update(values[is_train], mask=mask)
+                valid = mask & np.isfinite(dataset[name].values[is_train])
+                state["moments"][name].update(values[is_train], mask=valid)
 
 
 def _check_variable_roundtrip(physical: np.ndarray, normalized: np.ndarray,
