@@ -1,4 +1,4 @@
-"""Stream a trained C0 checkpoint into the existing full-split forecast contract."""
+"""Stream a trained checkpoint into the existing full-split forecast contract."""
 
 from pathlib import Path
 
@@ -36,7 +36,8 @@ def export_predictions(config, options: dict) -> dict:
     device = resolve_device(config.device)
     model = build_predictor(config, context.statistics).to(device).eval()
     model.load_state_dict(saved["model"])
-    dataset = TorchSSTDataset(context.root, options.get("split", "validation"))
+    dataset = TorchSSTDataset(context.root, options.get("split", "validation"),
+                              has_thermal_input=config.has_thermal_input)
     temporary = output.with_name(output.name + ".tmp")
     try:
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -93,6 +94,8 @@ def _write_predictions(model, dataset: TorchSSTDataset, state: dict) -> None:
         prediction, residual, last_sst, origins, targets = _create_file(handle, dataset, state["context"])
         handle.training_kind = state["metadata"]["kind"]
         handle.model_name = state["metadata"]["model"]
+        handle.sst_head = "residual" if state["config"].has_thermal_input else "direct"
+        residual.long_name = "Forecast minus origin SST in Celsius"
         position = 0
         with torch.no_grad():
             for batch in loader:

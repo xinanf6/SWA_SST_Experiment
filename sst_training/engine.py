@@ -20,12 +20,15 @@ from .runtime import (code_fingerprint, compatible_code_hashes, resolve_device, 
 
 
 RESUME_KEYS = ("run_identity", "config_fingerprint", "training_code_sha256", "model", "kind", "limits")
+DIRECT_SST_INITIAL_AMP_SCALE = 512.0
+RESIDUAL_INITIAL_AMP_SCALE = 65536.0
 
 
 def _run_metadata(context, config, options: dict) -> dict:
     limits = {name: options.get(name) for name in ("train_limit", "validation_limit")}
     device = resolve_device(config.device)
     return {"model": config.model_name, "run_identity": context.run_identity,
+            "sst_head": "residual" if config.has_thermal_input else "direct",
             "config_fingerprint": config.fingerprint(), "training_code_sha256": code_fingerprint(),
             "config": config.to_dict(), "architecture": describe_architecture(config),
             "kind": options.get("kind", "full_training"), "limits": limits,
@@ -60,8 +63,10 @@ def _training_state(context, config) -> dict:
     optimizer = torch.optim.AdamW(model.parameters(), lr=config.learning_rate, weight_decay=config.weight_decay)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.5, patience=config.scheduler_patience)
     has_amp = bool(config.amp and device.type == "cuda")
+    # Direct SST starts near the training mean and can have larger initial errors.
+    initial_scale = RESIDUAL_INITIAL_AMP_SCALE if config.has_thermal_input else DIRECT_SST_INITIAL_AMP_SCALE
     return {"device": device, "model": model, "optimizer": optimizer, "scheduler": scheduler,
-            "scaler": torch.cuda.amp.GradScaler(enabled=has_amp), "amp": has_amp,
+            "scaler": torch.cuda.amp.GradScaler(enabled=has_amp, init_scale=initial_scale), "amp": has_amp,
             "loss": C0Loss(context, config.auxiliary_weight).to(device), "config": config,
             "epoch": 0, "best_mse": None, "bad_epochs": 0, "history": [],
             "best_model": None, "best_epoch": 0, "telemetry": {"updates": 0, "overflow_skips": 0}}
@@ -87,7 +92,7 @@ def _resume_state(root: Path, state: dict) -> None:
 
 
 def run_training(config, options: dict = None) -> dict:
-    """Side effect: train only C0, publish epoch checkpoints and a truthful run status."""
+    """Side effect: train the configured model and publish epoch checkpoints."""
     options = options or {}
     _validate_options(options)
     validate_training_config(config)
@@ -100,9 +105,9 @@ def run_training(config, options: dict = None) -> dict:
     state["progress_enabled"] = options.get("progress", True)
     if options.get("resume"):
         _resume_state(config.output_root, state)
-    training = TorchSSTDataset(context.root, "train")
+    training = TorchSSTDataset(context.root, "train", has_thermal_input=config.has_thermal_input)
     try:
-        validation = TorchSSTDataset(context.root, "validation")
+        validation = TorchSSTDataset(context.root, "validation", has_thermal_input=config.has_thermal_input)
         try:
             _fit_epochs(state, {"training": training, "validation": validation}, dict(options, metadata=metadata))
         finally:

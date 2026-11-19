@@ -116,6 +116,34 @@ def test_parallel8_train_resume_and_export_keep_model_identity(fixture):
                                    dataset.last_sst.values[:, None] + dataset.residual.values)
 
 
+def test_dspg7_train_and_forecast_use_seven_channels_and_shared_evaluator(fixture):
+    baseline = replace(fixture, model_variant="dspg7")
+    dataset = TorchSSTDataset(baseline.prepared_root, "train", has_thermal_input=False)
+    try:
+        dropped = dataset.prepared.arrays.pop("thermal")
+        try:
+            sample = dataset[0]
+        finally:
+            dataset.prepared.arrays["thermal"] = dropped
+        assert sample["base"].shape == (14, 7, 7, 7)
+        assert "thermal" not in sample
+    finally:
+        dataset.close()
+    assert run_training(baseline, {"epochs": 1, "progress": False})["model"] == "DSPG7"
+    forecast = baseline.output_root / "dspg7.nc"
+    options = {"checkpoint": baseline.output_root / "best.pt", "output": forecast}
+    with pytest.raises(DataValidationError, match="configuration"):
+        export_predictions(fixture, options)
+    assert export_predictions(baseline, options)["origins"] == 1
+    context = load_context(baseline.prepared_root)
+    report = evaluate_forecast_file(context, {"predictions": forecast, "split": "validation",
+                   "output_root": forecast.parent / "metrics", "model_name": "DSPG7"})
+    assert report["sample_count"] == 1 and len(report["metrics"]) == 3
+    with xr.open_dataset(forecast) as stored:
+        assert stored.attrs["model_name"] == "DSPG7"
+        assert stored.attrs["sst_head"] == "direct"
+
+
 def test_trained_checkpoint_exports_full_forecast_and_scores_canonical_truth(fixture):
     run_training(fixture, {"epochs": 2})
     path = fixture.output_root / "predictions" / "forecast.nc"

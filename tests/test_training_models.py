@@ -11,7 +11,7 @@ from sst_training.epochs import run_epoch
 from sst_training.losses import C0Loss
 from sst_training.models.dspg import ModelSettings
 from sst_training.models.physics import AdvectionDiffusionBlock
-from sst_training.models.predictor import C0Predictor
+from sst_training.models.predictor import C0Predictor, DSPG7Predictor
 from sst_training.models.parallel import CompactParallelBackbone
 
 
@@ -101,6 +101,22 @@ def test_residual_uses_standard_deviation_without_adding_temperature_mean():
     expected = torch.tensor([19., 23., 11.])
     torch.testing.assert_close(output["predictions"][0, :, 0, 3, 3], expected)
     torch.testing.assert_close(output["residual"][0, :, 0, 3, 3], expected - 15.)
+
+
+def test_dspg7_outputs_absolute_sst_without_adding_the_origin():
+    model, batch = DSPG7Predictor(TINY, STATISTICS), _batch()
+    del batch["thermal"]
+    batch["last_sst"].fill_(10.)
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.zero_()
+        model.backbone.decoder[-1].bias.copy_(torch.tensor([1., 2., -1.]))
+    output = model(batch)
+    values = output["predictions"][0, :, 0, 3, 3]
+    torch.testing.assert_close(values, torch.tensor([19., 23., 11.]))
+    torch.testing.assert_close(output["residual"][0, :, 0, 3, 3], values - 10.)
+    C0Loss(_context())(output, batch)["total"].backward()
+    assert torch.isfinite(model.backbone.decoder[-1].bias.grad).all()
 
 
 def test_constant_sst_scale_matches_preprocessor_unit_scale():

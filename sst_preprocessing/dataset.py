@@ -136,26 +136,38 @@ class PreparedSSTDataset:
     def read_sample(self, sample_number: int, *, include_front: bool = True,
                     include_heat_increment: bool = True) -> dict:
         """Materialize the shared inputs and only the requested optional branches."""
+        row = self._sample_row(sample_number)
+        sample = self._read_base_sample(row)
+        environment_slice = slice(int(row.environment_start_index), int(row.environment_end_index) + 1)
+        sample["thermal"] = self._masked_copy(self.arrays["thermal"][environment_slice], "thermal")
+        if include_front:
+            sst_slice = slice(int(row.sst_start_index), int(row.sst_end_index) + 1)
+            sample["front"] = self._masked_copy(self.arrays["front"][sst_slice], "front")
+        if include_heat_increment:
+            sample["heat_increment"] = self._heat_prior(int(row.environment_end_index), len(sample["target_dates"]))
+        return sample
+
+    def read_base_sample(self, sample_number: int) -> dict:
+        """Read the seven-variable inputs, target and dates without materializing other groups."""
+        return self._read_base_sample(self._sample_row(sample_number))
+
+    def _sample_row(self, sample_number: int) -> pd.Series:
         if not self.arrays:
             raise DataValidationError("Dataset is closed; create a new PreparedSSTDataset")
-        row = self.sample_index.iloc[sample_number]
+        return self.sample_index.iloc[sample_number]
+
+    def _read_base_sample(self, row: pd.Series) -> dict:
         sst_slice = slice(int(row.sst_start_index), int(row.sst_end_index) + 1)
         environment_slice = slice(int(row.environment_start_index), int(row.environment_end_index) + 1)
         base = self._base_history(sst_slice, environment_slice)
         target_indices = self._target_indices(row)
-        sample = {
+        return {
             "base": base,
-            "thermal": self._masked_copy(self.arrays["thermal"][environment_slice], "thermal"),
             "target": self._masked_copy(self.arrays["base"][target_indices, :1], "base"),
             "last_sst": self._physical_values(self.arrays["base"][int(row.origin_index), :1], "sst"),
             "origin_date": str(row.origin_date),
             "target_dates": self.dates[target_indices].copy(),
         }
-        if include_front:
-            sample["front"] = self._masked_copy(self.arrays["front"][sst_slice], "front")
-        if include_heat_increment:
-            sample["heat_increment"] = self._heat_prior(int(row.environment_end_index), len(target_indices))
-        return sample
 
     def _base_history(self, sst_slice: slice, environment_slice: slice) -> np.ndarray:
         values = self.arrays["base"]

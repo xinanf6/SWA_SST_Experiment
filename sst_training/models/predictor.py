@@ -1,4 +1,4 @@
-"""C0: identical thermal information, residual output, no explicit heat addition."""
+"""Select the C0 residual head or the seven-variable direct SST reference."""
 
 import torch
 from torch import nn
@@ -6,14 +6,17 @@ from dataclasses import asdict
 
 from sst_preprocessing.statistics import _normalization_scale
 
-from ..config import COMPACT_MODEL_VARIANT, ORIGINAL_MODEL_VARIANT, TrainingConfig
+from ..config import BASELINE_MODEL_VARIANT, COMPACT_MODEL_VARIANT, ORIGINAL_MODEL_VARIANT, TrainingConfig
 from .dspg import DSPGBackbone, ModelSettings
 from .parallel import CompactParallelBackbone, FEATURE_CHANNELS, compact_architecture
 
 
 def build_predictor(config: TrainingConfig, statistics: dict) -> nn.Module:
     """Select the same model for training, restart and forecast export."""
-    return C0Predictor(ModelSettings(**config.architecture), statistics, config.model_variant)
+    settings = ModelSettings(**config.architecture)
+    if config.model_variant == BASELINE_MODEL_VARIANT:
+        return DSPG7Predictor(settings, statistics)
+    return C0Predictor(settings, statistics, config.model_variant)
 
 
 def describe_architecture(config: TrainingConfig) -> dict:
@@ -56,10 +59,34 @@ class C0Predictor(nn.Module):
         return {"predictions": prediction, "residual": residual, "displacement_pixels": displacement}
 
 
+class DSPG7Predictor(nn.Module):
+    """Preserve the seven-channel backbone and decode absolute SST in Celsius."""
+
+    def __init__(self, settings: ModelSettings, statistics: dict) -> None:
+        super().__init__()
+        self.backbone = DSPGBackbone(settings)
+        sst = statistics["variables"]["sst"]
+        self.register_buffer("sst_scale", torch.tensor(_normalization_scale(sst["std"]), dtype=torch.float32))
+        self.register_buffer("sst_mean", torch.tensor(sst["mean"], dtype=torch.float32))
+
+    def forward(self, batch: dict) -> dict:
+        base = batch["base"]
+        _validate_base(base, batch["last_sst"])
+        normalized_sst, displacement = self.backbone(base, self.backbone.spatial_encoder(base))
+        prediction = normalized_sst.float() * self.sst_scale + self.sst_mean
+        # Export the change from origin SST under the shared forecast schema.
+        change = prediction - batch["last_sst"].float()[:, None]
+        return {"predictions": prediction, "residual": change, "displacement_pixels": displacement}
+
+
 def _validate_inputs(base: torch.Tensor, thermal: torch.Tensor, last_sst: torch.Tensor) -> None:
-    if base.ndim != 5 or base.shape[1:3] != (14, 7):
-        raise ValueError("C0 base must have shape [B,14,7,H,W]")
+    _validate_base(base, last_sst)
     if thermal.shape != (base.shape[0], 14, 3) + tuple(base.shape[-2:]):
         raise ValueError("C0 thermal must have shape [B,14,3,H,W] on the same grid")
+
+
+def _validate_base(base: torch.Tensor, last_sst: torch.Tensor) -> None:
+    if base.ndim != 5 or base.shape[1:3] != (14, 7):
+        raise ValueError("base must have shape [B,14,7,H,W]")
     if last_sst.shape != (base.shape[0], 1) + tuple(base.shape[-2:]):
-        raise ValueError("C0 last_sst must have shape [B,1,H,W] in Celsius")
+        raise ValueError("last_sst must have shape [B,1,H,W] in Celsius")

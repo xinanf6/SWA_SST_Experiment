@@ -1,4 +1,4 @@
-"""Explicit C0 training settings, independent of the original DSPG globals."""
+"""Training settings independent of the original DSPG globals."""
 
 from __future__ import annotations
 
@@ -14,6 +14,9 @@ from sst_preprocessing.errors import ConfigurationError
 
 ORIGINAL_MODEL_VARIANT = "dspg"
 COMPACT_MODEL_VARIANT = "parallel8"
+BASELINE_MODEL_VARIANT = "dspg7"
+MODEL_NAMES = {ORIGINAL_MODEL_VARIANT: "C0", COMPACT_MODEL_VARIANT: "C0_parallel8",
+               BASELINE_MODEL_VARIANT: "DSPG7"}
 
 
 @dataclass(frozen=True)
@@ -40,7 +43,11 @@ class TrainingConfig:
 
     @property
     def model_name(self) -> str:
-        return "C0_parallel8" if self.model_variant == COMPACT_MODEL_VARIANT else "C0"
+        return MODEL_NAMES[self.model_variant]
+
+    @property
+    def has_thermal_input(self) -> bool:
+        return self.model_variant != BASELINE_MODEL_VARIANT
 
     def to_dict(self) -> dict:
         result = asdict(self)
@@ -69,7 +76,7 @@ def load_training_config(path: Path, output_root: Path = None) -> TrainingConfig
     try:
         config = TrainingConfig(**values)
     except TypeError as error:
-        raise ConfigurationError("Invalid C0 training configuration: %s" % error) from error
+        raise ConfigurationError("Invalid training configuration: %s" % error) from error
     validate_training_config(config)
     return config
 
@@ -85,8 +92,8 @@ def validate_training_config(config: TrainingConfig) -> None:
         raise ConfigurationError("Training device must be auto, cpu or cuda")
     if config.weight_decay < 0 or config.auxiliary_weight < 0:
         raise ConfigurationError("Training loss/decay weights must be nonnegative")
-    if config.model_variant not in (ORIGINAL_MODEL_VARIANT, COMPACT_MODEL_VARIANT):
-        raise ConfigurationError("Training model_variant must be dspg or parallel8")
+    if not isinstance(config.model_variant, str) or config.model_variant not in MODEL_NAMES:
+        raise ConfigurationError("Training model_variant must be dspg, parallel8 or dspg7")
     if config.model_variant == COMPACT_MODEL_VARIANT and config.architecture:
         raise ConfigurationError("parallel8 uses fixed widths; leave architecture empty")
 

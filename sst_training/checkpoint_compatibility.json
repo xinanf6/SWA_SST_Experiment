@@ -1,12 +1,13 @@
 {
   "groups": [
     {
-      "reason": "Audited display and input-read updates plus opt-in parallel8 registration. Original C0 initialization, inputs, optimization and RNG behavior are preserved. Model and configuration identities keep the variants separate.",
+      "reason": "Audited progress, equivalent input reads and model registration. Existing C0 model initialization, inputs and optimization are preserved. Model and configuration identities keep the variants separate.",
       "hashes": [
         "eb8e3f3d5c9a847be8bb61e8f5095916a8258f23c0fd08ac925dffa07278a31a",
         "e791afab71ec9ccd2504d72f39c26f58f1d771b64c4a618bedb29b17a2265758",
         "983e5a150e182ceb5145836ef6736bae191e063b52999c0924db9831581668ae",
-        "ea1a30d5149eda60f7d5b8742d611e2bad662ca056e3a258fec92d89a14c9bcd"
+        "ea1a30d5149eda60f7d5b8742d611e2bad662ca056e3a258fec92d89a14c9bcd",
+        "6b3022ff372ce33e4b0f115ae62a82a591a1537d5483acfcbe7341ba8bbd5909"
       ]
     }
   ]

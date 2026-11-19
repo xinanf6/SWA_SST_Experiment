@@ -94,6 +94,26 @@ python -m sst_training predict --config configs/training_c0_parallel8.json --che
 python -m sst_analysis evaluate --config configs/analysis.json --predictions output/predictions/C0_parallel8_seed2026_validation.nc --split validation --output-root output/analysis/C0_parallel8_seed2026_validation
 ```
 
+## 七变量原版 DSPG 对照
+
+`configs/training_dspg7.json` 启用 `DSPG7`，保留原版 DSPG 的空间编码、动力启发模块、双流时序和解码器。只使用 SST、10 m 风、表层海流、2 m 气温和海平面气压共 7 个通道，直接预测三提前期 SST。计算损失和导出前，模型把预测反标准化为 ℃。NetCDF 中的 `residual` 为预测 SST 减起报 SST。
+
+这是在当前西南大西洋数据和统一训练协议下重训原版结构。使用种子 2026、3580 个训练窗、704 个验证窗、270×250 网格、14 天历史和三个提前期。保留统一的核心区面积加权 SST MSE、海流辅助项及验证 SST MSE 选优规则。DSPG7 的 AMP 初始缩放为 512，以减少训练开始时的梯度溢出跳步。
+
+```powershell
+python -m sst_training train --config configs/training_dspg7.json
+python -m sst_training predict --config configs/training_dspg7.json --checkpoint output/training/DSPG7_seed2026/best.pt --split validation --output output/predictions/DSPG7_seed2026_validation.nc
+python -m sst_analysis evaluate --config configs/analysis.json --predictions output/predictions/DSPG7_seed2026_validation.nc --split validation --output-root output/analysis/DSPG7_seed2026_validation --model-name DSPG7_seed2026 --front-lines
+```
+
+训练结束后运行导出与评价。检查点写在 `output/training/DSPG7_seed2026/`，中断后可用原训练命令加 `--resume`，从最近保存的完整轮次继续。用于调试可先将 `train` 改成 `smoke`，短程检查点写入独立目录。
+
+```powershell
+python -m sst_analysis compare --config configs/analysis.json --evaluation-a output/analysis/C0_parallel8_seed2026_validation --evaluation-b output/analysis/DSPG7_seed2026_validation --output-root output/analysis/C0_parallel8_vs_DSPG7_validation
+```
+
+比较按相同起报日配对，差值方向是 `C0_parallel8 − DSPG7`。逐提前期查看温度 RMSE、强锋区 RMSE、梯度指标和置信区间，锋线 F1 和位置误差可在两边的 `metrics_summary.csv` 中对照。两个模型的主干、输入和输出形式均有差异，因此这一组比较用于说明整体性能和开销差异。
+
 ## 离线验收
 
 ```powershell

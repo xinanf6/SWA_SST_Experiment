@@ -1,4 +1,4 @@
-"""Explicit C0 smoke, training and trained-checkpoint prediction commands."""
+"""Smoke, training and trained-checkpoint prediction commands."""
 
 import argparse
 import json
@@ -11,7 +11,7 @@ from .config import load_training_config
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="C0 training using frozen prepared SST data")
+    parser = argparse.ArgumentParser(description="SST training using the prepared Southwest Atlantic data")
     commands = parser.add_subparsers(dest="command", required=True)
     for name in ("smoke", "train", "predict"):
         command = commands.add_parser(name)

@@ -10,21 +10,26 @@ from torch.utils.data import DataLoader, Dataset, Subset
 from sst_preprocessing.dataset import PreparedSSTDataset
 
 
+BASE_TENSOR_KEYS = ("base", "target", "last_sst")
 TENSOR_KEYS = ("base", "thermal", "target", "last_sst")
 
 
 class TorchSSTDataset(Dataset):
-    """C0 reads base/thermal tensors; returned targets remain normalized until loss."""
+    """Read the requested input branches; targets remain normalized until loss."""
 
-    def __init__(self, root: Path, split: str) -> None:
+    def __init__(self, root: Path, split: str, *, has_thermal_input: bool = True) -> None:
         self.prepared = PreparedSSTDataset(root, split)
+        self.has_thermal_input = has_thermal_input
 
     def __len__(self) -> int:
         return len(self.prepared)
 
     def __getitem__(self, position: int) -> dict:
-        source = self.prepared.read_sample(position, include_front=False, include_heat_increment=False)
-        tensors = {name: torch.from_numpy(source[name]) for name in TENSOR_KEYS}
+        if self.has_thermal_input:
+            source = self.prepared.read_sample(position, include_front=False, include_heat_increment=False)
+        else:
+            source = self.prepared.read_base_sample(position)
+        tensors = {name: torch.from_numpy(source[name]) for name in _tensor_keys(source)}
         return dict(tensors, origin_date=source["origin_date"],
                     target_dates=source["target_dates"].astype("datetime64[D]").astype(str).tolist())
 
@@ -51,4 +56,8 @@ def build_loader(dataset: TorchSSTDataset, config, options: dict) -> DataLoader:
 
 def tensor_batch(batch: dict, device: torch.device) -> dict:
     """Copy only model/loss tensors; dates stay on the host in canonical order."""
-    return {name: batch[name].to(device, non_blocking=True) for name in TENSOR_KEYS}
+    return {name: batch[name].to(device, non_blocking=True) for name in _tensor_keys(batch)}
+
+
+def _tensor_keys(batch: dict) -> tuple:
+    return TENSOR_KEYS if "thermal" in batch else BASE_TENSOR_KEYS
